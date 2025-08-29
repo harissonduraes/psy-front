@@ -68,7 +68,7 @@ function App() {
     formData.append('audio', audioBlob, 'recording.webm');
 
     try {
-      const response = await fetch('http://127.0.0.1:5000/process_audio', {
+      const response = await fetch('https://back-psy.vercel.app/process_audio', {
         method: 'POST',
         body: formData,
       });
