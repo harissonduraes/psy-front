@@ -1,9 +1,9 @@
-import { useState, useRef } from 'react';
+import { useState, useRef } from 'react'; // React é importado mas não diretamente usado no JSX, mas é necessário para o JSX transformar
 import './App.css'; // Importa o CSS
 
 function App() {
   const [isRecording, setIsRecording] = useState(false);
-  const [statusMessage, setStatusMessage] = useState('Pressione o botão para começar a falar.');
+  const [statusMessage, setStatusMessage] = useState('Clique para iniciar a conversa.');
   const [transcriptionText, setTranscriptionText] = useState('');
   const [llmResponseText, setLlmResponseText] = useState('');
 
@@ -13,38 +13,46 @@ function App() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   // Ref para armazenar os pedaços de áudio, tipado como um array de Blob
   const audioChunksRef = useRef<Blob[]>([]);
+  // Ref para o stream de áudio do microfone, tipado como MediaStream ou null
+  const audioStreamRef = useRef<MediaStream | null>(null);
 
+  // Função para iniciar a gravação
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      // Atribui a instância do MediaRecorder ao ref.
-      // O tipo MediaRecorder | null já lida com a atribuição.
+      audioStreamRef.current = stream; // Armazena o stream para poder pará-lo depois
+
+      // Cria uma nova instância de MediaRecorder e a atribui ao ref
       mediaRecorderRef.current = new MediaRecorder(stream, { mimeType: 'audio/webm' });
       audioChunksRef.current = []; // Limpa os pedaços de áudio anteriores
 
       // Define o manipulador de evento para quando dados de áudio estão disponíveis.
       // O 'event' é tipado como BlobEvent.
-      mediaRecorderRef.current.ondataavailable = (event: BlobEvent) => {
-        audioChunksRef.current.push(event.data);
-      };
+      if (mediaRecorderRef.current) { // Verificação para garantir que current não é null
+        mediaRecorderRef.current.ondataavailable = (event: BlobEvent) => {
+          audioChunksRef.current.push(event.data);
+        };
 
-      // Define o manipulador de evento para quando a gravação é parada.
-      mediaRecorderRef.current.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        await processAudio(audioBlob);
-        stream.getTracks().forEach((track) => track.stop()); // Parar o microfone
-      };
+        // Define o manipulador de evento para quando a gravação é parada.
+        mediaRecorderRef.current.onstop = async () => {
+          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          await processAudio(audioBlob);
+          // Parar o microfone após a gravação ser processada
+          if (audioStreamRef.current) {
+            audioStreamRef.current.getTracks().forEach((track) => track.stop());
+          }
+        };
 
-      // Inicia a gravação. mediaRecorderRef.current é garantidamente não nulo aqui.
-      mediaRecorderRef.current.start();
-      setIsRecording(true);
-      setStatusMessage('Gravando... Solte para enviar.');
-      setTranscriptionText('');
-      setLlmResponseText('');
-      // Limpa o áudio anterior no player, se existir.
-      // Adiciona verificação de null para audioPlaybackRef.current.
-      if (audioPlaybackRef.current) {
-        audioPlaybackRef.current.src = '';
+        mediaRecorderRef.current.start();
+        setIsRecording(true);
+        setStatusMessage('Gravando... Clique novamente para parar.');
+        setTranscriptionText('');
+        setLlmResponseText('');
+        // Limpa o áudio anterior no player, se existir.
+        // Adiciona verificação de null para audioPlaybackRef.current.
+        if (audioPlaybackRef.current) {
+          audioPlaybackRef.current.src = '';
+        }
       }
     } catch (err) {
       console.error('Erro ao acessar o microfone:', err);
@@ -52,17 +60,27 @@ function App() {
     }
   };
 
+  // Função para parar a gravação
   const stopRecording = () => {
     // Verifica se mediaRecorderRef.current não é null e se está gravando.
     // O TypeScript agora entende que mediaRecorderRef.current é MediaRecorder dentro deste if.
-    if (mediaRecorderRef.current && isRecording) {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop(); // Para a gravação
       setIsRecording(false);
       setStatusMessage('Processando...');
     }
   };
 
-  // Função para processar o áudio, tipando audioBlob como Blob.
+  // Função que alterna entre iniciar e parar a gravação
+  const handleRecordButtonClick = () => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  };
+
+  // Função para enviar o áudio para o backend e reproduzir a resposta, tipando audioBlob como Blob.
   const processAudio = async (audioBlob: Blob) => {
     const formData = new FormData();
     formData.append('audio', audioBlob, 'recording.webm');
@@ -79,8 +97,8 @@ function App() {
       }
 
       const data = await response.json();
-      setTranscriptionText(`Você disse: "${data.transcription}"`);
-      setLlmResponseText(`IA disse: "${data.llm_response}"`);
+      setTranscriptionText(data.transcription);
+      setLlmResponseText(data.llm_response);
 
       // Verifica se audioPlaybackRef.current não é null antes de acessar suas propriedades.
       if (audioPlaybackRef.current) {
@@ -108,16 +126,13 @@ function App() {
       <button
         id="recordButton"
         className={isRecording ? 'recording' : ''}
-        onMouseDown={startRecording}
-        onMouseUp={stopRecording}
-        onTouchStart={startRecording}
-        onTouchEnd={stopRecording}
+        onClick={handleRecordButtonClick} // Usamos onClick agora
       >
-        {isRecording ? 'Gravando...' : 'Pressione para Falar'}
+        {isRecording ? 'Parar Gravação' : 'Iniciar Gravação'}
       </button>
       <div id="status">{statusMessage}</div>
-      {transcriptionText && <div id="transcription"><strong>Sua Fala:</strong> {transcriptionText}</div>}
-      {llmResponseText && <div id="llmResponse"><strong>Resposta da IA:</strong> {llmResponseText}</div>}
+      {transcriptionText && <div id="transcription"><strong>Você disse:</strong> {transcriptionText}</div>}
+      {llmResponseText && <div id="llmResponse"><strong>IA disse:</strong> {llmResponseText}</div>}
       {/* O elemento audio deve ter 'controls' e 'autoPlay' para funcionar como esperado */}
       <audio ref={audioPlaybackRef} controls autoPlay></audio>
     </div>
